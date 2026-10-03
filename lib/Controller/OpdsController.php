@@ -218,12 +218,14 @@ class OpdsController extends Controller {
         }
         
         $book = $this->bookService->getBookById($id);
-        
+
         if (!$book) {
             return new DataResponse(['error' => 'Book not found'], 404);
         }
 
-        return $this->bookService->downloadBook($book, $format);
+        // OPDS gets the opds-optimized mirror, not the original -- see
+        // BookService::downloadOptimizedBook().
+        return $this->bookService->downloadOptimizedBook($book, $format);
     }
 
     #[NoAdminRequired]

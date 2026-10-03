@@ -7,6 +7,8 @@ use OCP\BackgroundJob\IJobList;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Files\Events\Node\NodeDeletedEvent;
+use OCP\Files\IRootFolder;
+use OCP\Files\Node;
 use OCP\Config\IUserConfig;
 use OCP\IDBConnection;
 use Psr\Log\LoggerInterface;
@@ -28,7 +30,8 @@ class FileDeleteListener implements IEventListener {
         IUserConfig $config,
         IDBConnection $db,
         LoggerInterface $logger,
-        private IJobList $jobList
+        private IJobList $jobList,
+        private IRootFolder $rootFolder
     ) {
         $this->config = $config;
         $this->db = $db;
@@ -57,6 +60,7 @@ class FileDeleteListener implements IEventListener {
 
         $fileId = $node->getId();
         $this->cleanupFileReferences($fileId, $userId, $node->getPath());
+        $this->deleteOptimizedCopy($node, $userId);
 
         // Drop the extraction job too, if one is still queued. It would run,
         // find the file gone and no-op -- harmless, but it leaves rows in oc_jobs
@@ -83,9 +87,30 @@ class FileDeleteListener implements IEventListener {
             return false;
         }
 
+        // Deletions inside the mirror aren't library deletions -- the mirror
+        // copy is cleaned up below, from the source file's own delete event.
+        if (strpos($path, "/files/$folderName/" . BookService::OPTIMIZED_FOLDER_NAME . "/") !== false) {
+            return false;
+        }
+
         // Check if it's an ebook file
         $extension = strtolower(pathinfo($node->getName(), PATHINFO_EXTENSION));
         return in_array($extension, BookService::SUPPORTED_EXTENSIONS, true);
+    }
+
+    /** Best-effort: remove the opds-optimized mirror copy for a deleted source file. */
+    private function deleteOptimizedCopy(Node $node, string $userId): void {
+        try {
+            $folderName = $this->config->getValueString($userId, 'koreader_companion', 'folder', 'eBooks');
+            $extension = strtolower(pathinfo($node->getName(), PATHINFO_EXTENSION));
+
+            $userFolder = $this->rootFolder->getUserFolder($userId);
+            $booksFolder = $userFolder->get($folderName);
+            $optimizedFolder = $booksFolder->get(BookService::OPTIMIZED_FOLDER_NAME);
+            $optimizedFolder->get($node->getId() . '.' . $extension)->delete();
+        } catch (\Exception $e) {
+            // Nothing to clean up, or the mirror was never built -- fine either way.
+        }
     }
 
     private function extractUserIdFromPath(string $path): ?string {

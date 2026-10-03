@@ -87,6 +87,12 @@ class FileCreationListener implements IEventListener {
             return false;
         }
 
+        // The opds-optimized mirror lives inside this same folder -- without this,
+        // writing a copy there would fire a new event and get indexed as a book.
+        if (strpos($path, "/files/$folderName/" . BookService::OPTIMIZED_FOLDER_NAME . "/") !== false) {
+            return false;
+        }
+
         $extension = strtolower(pathinfo($node->getName(), PATHINFO_EXTENSION));
         return in_array($extension, BookService::SUPPORTED_EXTENSIONS, true);
     }

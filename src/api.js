@@ -101,6 +101,17 @@ export async function setAutoRename(enabled) {
 	return axios.put(url('/settings/auto-rename'), { auto_rename: enabled ? 'yes' : 'no' })
 }
 
+/** Rebuilds the opds-optimized mirror server-side once saved -- see SettingsController::setOpdsOptimize(). */
+export async function setOpdsOptimize({ enabled, maxWidth, maxHeight, grayscale }) {
+	const { data } = await axios.put(url('/settings/opds-optimize'), {
+		enabled: enabled ? 'yes' : 'no',
+		max_width: maxWidth,
+		max_height: maxHeight,
+		grayscale: grayscale ? 'yes' : 'no',
+	})
+	return data
+}
+
 export async function batchRename() {
 	const { data } = await axios.post(url('/settings/batch-rename'), { auto_rename: 'yes' })
 	return data

@@ -18,6 +18,7 @@ return [
         ['name' => 'settings#getSettings', 'url' => '/settings', 'verb' => 'GET'],
         ['name' => 'settings#setFolder', 'url' => '/settings/folder', 'verb' => 'PUT'],
         ['name' => 'settings#setAutoRename', 'url' => '/settings/auto-rename', 'verb' => 'PUT'],
+        ['name' => 'settings#setOpdsOptimize', 'url' => '/settings/opds-optimize', 'verb' => 'PUT'],
         ['name' => 'settings#batchRename', 'url' => '/settings/batch-rename', 'verb' => 'POST'],
         ['name' => 'settings#getBatchRenameProgress', 'url' => '/settings/batch-rename-progress', 'verb' => 'GET'],
         

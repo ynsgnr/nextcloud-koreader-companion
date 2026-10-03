@@ -44,6 +44,53 @@
 
 			<NcProgressBar v-if="renaming" :value="renameProgress" size="medium" class="settings__progress" />
 		</NcSettingsSection>
+
+		<NcSettingsSection
+			:name="t('koreader_companion', 'OPDS Optimization')"
+			:description="t('koreader_companion', 'Shrink oversized images in new EPUBs before OPDS clients (like KOReader) download them. The in-app reader always uses the original file.')">
+			<NcCheckboxRadioSwitch
+				:model-value="optimizeEnabled"
+				type="switch"
+				@update:model-value="onOptimizeEnabledChange">
+				{{ t('koreader_companion', 'Optimize new EPUBs for OPDS') }}
+			</NcCheckboxRadioSwitch>
+
+			<div class="settings__row">
+				<NcTextField
+					:model-value="String(optimizeMaxWidth)"
+					:disabled="!optimizeEnabled"
+					type="number"
+					:label="t('koreader_companion', 'Max image width (px)')"
+					class="settings__optimize-field"
+					@update:model-value="optimizeMaxWidth = $event" />
+				<NcTextField
+					:model-value="String(optimizeMaxHeight)"
+					:disabled="!optimizeEnabled"
+					type="number"
+					:label="t('koreader_companion', 'Max image height (px)')"
+					class="settings__optimize-field"
+					@update:model-value="optimizeMaxHeight = $event" />
+			</div>
+
+			<NcCheckboxRadioSwitch
+				:model-value="optimizeGrayscale"
+				type="switch"
+				:disabled="!optimizeEnabled"
+				@update:model-value="onOptimizeGrayscaleChange">
+				{{ t('koreader_companion', 'Convert images to grayscale') }}
+			</NcCheckboxRadioSwitch>
+
+			<NcButton
+				:disabled="savingOptimize"
+				class="settings__rename"
+				@click="saveOptimizeSettings">
+				<template #icon>
+					<NcLoadingIcon v-if="savingOptimize" :size="20" />
+					<ContentSaveOutline v-else :size="20" />
+				</template>
+				{{ t('koreader_companion', 'Save and rebuild opds-optimized library') }}
+			</NcButton>
+		</NcSettingsSection>
 	</div>
 </template>
 
@@ -55,6 +102,7 @@ import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcProgressBar from '@nextcloud/vue/components/NcProgressBar'
 import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
+import ContentSaveOutline from 'vue-material-design-icons/ContentSaveOutline.vue'
 import FolderOutline from 'vue-material-design-icons/FolderOutline.vue'
 import Pencil from 'vue-material-design-icons/Pencil.vue'
 
@@ -64,12 +112,14 @@ import {
 	getSettings,
 	setAutoRename,
 	setFolder,
+	setOpdsOptimize,
 } from '../api.js'
 
 export default {
 	name: 'SettingsView',
 
 	components: {
+		ContentSaveOutline,
 		FolderOutline,
 		NcButton,
 		NcCheckboxRadioSwitch,
@@ -87,6 +137,11 @@ export default {
 			renaming: false,
 			renameProgress: 0,
 			poll: null,
+			optimizeEnabled: true,
+			optimizeMaxWidth: 1600,
+			optimizeMaxHeight: 2400,
+			optimizeGrayscale: false,
+			savingOptimize: false,
 		}
 	},
 
@@ -95,6 +150,10 @@ export default {
 			const settings = await getSettings()
 			this.folder = settings.folder || 'eBooks'
 			this.autoRename = settings.auto_rename === 'yes'
+			this.optimizeEnabled = settings.opds_optimize_enabled !== 'no'
+			this.optimizeMaxWidth = parseInt(settings.opds_optimize_max_width, 10) || 1600
+			this.optimizeMaxHeight = parseInt(settings.opds_optimize_max_height, 10) || 2400
+			this.optimizeGrayscale = settings.opds_optimize_grayscale === 'yes'
 		} catch (error) {
 			showError(t('koreader_companion', 'Could not load settings'))
 		}
@@ -156,6 +215,34 @@ export default {
 			}
 		},
 
+		async onOptimizeEnabledChange(value) {
+			this.optimizeEnabled = value
+			await this.saveOptimizeSettings()
+		},
+
+		async onOptimizeGrayscaleChange(value) {
+			this.optimizeGrayscale = value
+			await this.saveOptimizeSettings()
+		},
+
+		/** Width/height only commit here (button or a switch), not on every keystroke. */
+		async saveOptimizeSettings() {
+			this.savingOptimize = true
+			try {
+				await setOpdsOptimize({
+					enabled: this.optimizeEnabled,
+					maxWidth: this.optimizeMaxWidth,
+					maxHeight: this.optimizeMaxHeight,
+					grayscale: this.optimizeGrayscale,
+				})
+				showSuccess(t('koreader_companion', 'OPDS optimization settings saved'))
+			} catch (error) {
+				showError(t('koreader_companion', 'Could not save that setting'))
+			} finally {
+				this.savingOptimize = false
+			}
+		},
+
 		async confirmRename() {
 			this.renaming = true
 			this.renameProgress = 0
@@ -211,6 +298,11 @@ export default {
 	&__progress {
 		margin-block-start: calc(var(--default-grid-baseline) * 2);
 		max-width: 360px;
+	}
+
+	&__optimize-field {
+		flex: 1 1 160px;
+		max-width: 200px;
 	}
 }
 </style>

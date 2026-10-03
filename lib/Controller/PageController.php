@@ -755,7 +755,7 @@ class PageController extends Controller {
                         $updateQb->set($key, $updateQb->createNamedParameter($value ?: null));
                     }
                 }
-                
+
                 $updateQb->set('file_path', $updateQb->createNamedParameter($filePath))
                     ->set('updated_at', $updateQb->createNamedParameter($currentTime))
                     // This row now holds real metadata -- the user's own, typed
@@ -763,9 +763,15 @@ class PageController extends Controller {
                     // claiming it is still processing and stops the queued
                     // ExtractMetadataJob overwriting those values on the next
                     // cron run (BookService::indexFile skips done rows).
+                    //
+                    // That same skip is why this path -- unlike insertFileMetadata/
+                    // updateFileMetadata -- has to build the opds-optimized mirror
+                    // and hash mappings itself below: indexFile() will never reach
+                    // them for a row this path has already marked done.
                     ->set('indexing_state', $updateQb->createNamedParameter(BookService::STATE_DONE));
 
                 $updateQb->executeStatement();
+                $this->bookService->finalizeUploadedFile($file, $userId, (int)$existingId);
             } else {
                 // Insert new metadata
                 $insertQb = $this->db->getQueryBuilder();
@@ -791,6 +797,8 @@ class PageController extends Controller {
                     ]);
 
                 $insertQb->executeStatement();
+                $metadataId = $this->db->lastInsertId('oc_koreader_metadata');
+                $this->bookService->finalizeUploadedFile($file, $userId, (int)$metadataId);
             }
         } catch (\Exception $e) {
             $this->logger->error('Failed to store metadata for file', [

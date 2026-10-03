@@ -2,6 +2,7 @@
 namespace OCA\KoreaderCompanion\Service;
 
 use OCP\DB\QueryBuilder\IQueryBuilder;
+use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
 use OCP\Files\Node;
 use OCP\Config\IUserConfig;
@@ -28,6 +29,19 @@ class BookService {
     /** Comic archives, handled by the same metadata path. */
     public const COMIC_EXTENSIONS = ['cbr', 'cbz'];
 
+    /**
+     * OPDS download mirror, nested inside the library folder.
+     *
+     * Lives inside the same folder the indexer and file-event listeners watch,
+     * so every folder walk and path match must skip this name -- otherwise a
+     * mirrored copy gets indexed (and re-optimized) as if it were a new book.
+     */
+    public const OPTIMIZED_FOLDER_NAME = 'opds-optimized';
+
+    private const DEFAULT_OPTIMIZE_MAX_WIDTH = 1600;
+    private const DEFAULT_OPTIMIZE_MAX_HEIGHT = 2400;
+    private const DEFAULT_OPTIMIZE_QUALITY = 85;
+
     private $rootFolder;
     private $config;
     private $userSession;
@@ -35,6 +49,7 @@ class BookService {
     private $pdfExtractor;
     private DocumentHashGenerator $hashGenerator;
     private IPreview $previewManager;
+    private EpubOptimizerService $epubOptimizer;
     private LoggerInterface $logger;
 
     public function __construct(
@@ -45,6 +60,7 @@ class BookService {
         PdfMetadataExtractor $pdfExtractor,
         DocumentHashGenerator $hashGenerator,
         IPreview $previewManager,
+        EpubOptimizerService $epubOptimizer,
         LoggerInterface $logger
     ) {
         $this->rootFolder = $rootFolder;
@@ -54,6 +70,7 @@ class BookService {
         $this->pdfExtractor = $pdfExtractor;
         $this->hashGenerator = $hashGenerator;
         $this->previewManager = $previewManager;
+        $this->epubOptimizer = $epubOptimizer;
         $this->logger = $logger;
     }
 
@@ -539,6 +556,9 @@ class BookService {
     private function syncFolderToDatabase(Node $folder, string $userId, array &$existingMetadata) {
         foreach ($folder->getDirectoryListing() as $node) {
             if ($node->getType() === \OCP\Files\FileInfo::TYPE_FOLDER) {
+                if (strtolower($node->getName()) === self::OPTIMIZED_FOLDER_NAME) {
+                    continue;
+                }
                 $this->syncFolderToDatabase($node, $userId, $existingMetadata);
             } else {
                 $extension = strtolower(pathinfo($node->getName(), PATHINFO_EXTENSION));
@@ -558,6 +578,7 @@ class BookService {
                 $metadata = $existingMetadata[$fileId];
                 $lastUpdated = new \DateTime($metadata['updated_at']);
                 if ($fileModTime <= $lastUpdated->getTimestamp()) {
+                    $this->backfillOptimizedCopy($file, $userId, (int)$metadata['id']);
                     return;
                 }
                 $this->updateFileMetadata($file, $userId, $metadata['id']);
@@ -577,6 +598,7 @@ class BookService {
                 if ($existingRow) {
                     $lastUpdated = new \DateTime($existingRow['updated_at']);
                     if ($fileModTime <= $lastUpdated->getTimestamp()) {
+                        $this->backfillOptimizedCopy($file, $userId, (int)$existingRow['id']);
                         return;
                     }
                     $this->updateFileMetadata($file, $userId, $existingRow['id']);
@@ -590,6 +612,35 @@ class BookService {
                 'exception' => $e
             ]);
         }
+    }
+
+    /**
+     * Self-healing hook for files whose metadata is already current -- runs on
+     * every reconciliation pass, but ensureOptimizedCopy() is a cheap existence
+     * check unless the mirror is actually missing (first run, or after a
+     * settings change wiped it).
+     */
+    private function backfillOptimizedCopy(Node $file, string $userId, int $metadataId): void {
+        $format = strtolower(pathinfo($file->getName(), PATHINFO_EXTENSION));
+        $optimized = $this->ensureOptimizedCopy($file, $userId, $format, false);
+        if ($optimized['created']) {
+            $this->createHashMappingsForFile($file, $userId, $metadataId, $optimized['node']);
+        }
+    }
+
+    /**
+     * Builds the mirror and hash mappings for a file whose metadata row was just
+     * written directly by PageController::storeBookMetadata() (the web upload
+     * form) rather than through insertFileMetadata()/updateFileMetadata(). That
+     * path marks the row done immediately, which makes indexFile() skip it on
+     * the next cron run -- so nothing else would ever call ensureOptimizedCopy()
+     * or createHashMappingsForFile() for it. force=true because this is either a
+     * brand new file or one whose content just changed.
+     */
+    public function finalizeUploadedFile(Node $file, string $userId, int $metadataId): void {
+        $format = strtolower(pathinfo($file->getName(), PATHINFO_EXTENSION));
+        $optimized = $this->ensureOptimizedCopy($file, $userId, $format, true);
+        $this->createHashMappingsForFile($file, $userId, $metadataId, $optimized['node']);
     }
 
     /**
@@ -625,8 +676,10 @@ class BookService {
 
             $metadataId = $this->db->lastInsertId('oc_koreader_metadata');
 
-            // Generate and store KOReader document hashes
-            $this->createHashMappingsForFile($file, $userId, $metadataId);
+            // Build the mirror before hashing -- the binary hash must match what
+            // OPDS actually serves, not the original file.
+            $optimized = $this->ensureOptimizedCopy($file, $userId, $metadata['format']);
+            $this->createHashMappingsForFile($file, $userId, $metadataId, $optimized['node']);
 
         } catch (\Exception $e) {
             $this->logger->error('Failed to insert file metadata', [
@@ -663,8 +716,10 @@ class BookService {
                 ->where($qb->expr()->eq('id', $qb->createNamedParameter($metadataId)))
                 ->executeStatement();
 
-            // Regenerate KOReader document hashes (file may have changed)
-            $this->createHashMappingsForFile($file, $userId, $metadataId);
+            // Content changed, so force a rebuild -- an existence check alone
+            // would keep serving the stale copy.
+            $optimized = $this->ensureOptimizedCopy($file, $userId, $metadata['format'], true);
+            $this->createHashMappingsForFile($file, $userId, $metadataId, $optimized['node']);
 
         } catch (\Exception $e) {
             $this->logger->error('Failed to update file metadata', [
@@ -730,6 +785,9 @@ class BookService {
     protected function scanFolder(Node $folder, &$books) {
         foreach ($folder->getDirectoryListing() as $node) {
             if ($node->getType() === \OCP\Files\FileInfo::TYPE_FOLDER) {
+                if (strtolower($node->getName()) === self::OPTIMIZED_FOLDER_NAME) {
+                    continue;
+                }
                 $this->scanFolder($node, $books);
             } else {
                 $extension = strtolower(pathinfo($node->getName(), PATHINFO_EXTENSION));
@@ -1959,15 +2017,18 @@ class BookService {
     }
 
     /**
-     * Create hash mappings for a file
-     * Generates both binary and filename hashes and stores them in koreader_hash_mapping table
+     * Stores binary + filename hashes for a file in koreader_hash_mapping.
+     *
+     * $file is always the filename-hash source (KOReader hashes the filename it
+     * saved its download as). $binarySource, when given, is hashed for the binary
+     * hash instead of $file -- callers pass the opds-optimized mirror there, since
+     * that's what OPDS actually serves.
      */
-    private function createHashMappingsForFile(Node $file, string $userId, int $metadataId): void {
+    private function createHashMappingsForFile(Node $file, string $userId, int $metadataId, ?Node $binarySource = null): void {
         try {
-            // Generate document hashes
-            $hashes = $this->hashGenerator->generateDocumentHashesFromNode($file);
-            $binaryHash = $hashes['binary_hash'] ?? null;
-            $filenameHash = $hashes['filename_hash'] ?? null;
+            $hashSource = $binarySource ?? $file;
+            $binaryHash = $this->hashGenerator->generateBinaryHashFromNode($hashSource);
+            $filenameHash = $this->hashGenerator->generateFilenameHashFromNode($file);
 
             if (!$binaryHash && !$filenameHash) {
                 $this->logger->warning('Failed to generate hashes for file', [
@@ -2026,6 +2087,130 @@ class BookService {
                 'metadata_id' => $metadataId,
                 'exception' => $e->getMessage()
             ]);
+        }
+    }
+
+    // ====================== OPDS OPTIMIZED MIRROR ======================
+
+    private function getOptimizeSettings(string $userId): array {
+        return [
+            'enabled' => $this->config->getValueString($userId, 'koreader_companion', 'opds_optimize_enabled', 'yes') === 'yes',
+            'max_width' => (int)$this->config->getValueString($userId, 'koreader_companion', 'opds_optimize_max_width', (string)self::DEFAULT_OPTIMIZE_MAX_WIDTH),
+            'max_height' => (int)$this->config->getValueString($userId, 'koreader_companion', 'opds_optimize_max_height', (string)self::DEFAULT_OPTIMIZE_MAX_HEIGHT),
+            'grayscale' => $this->config->getValueString($userId, 'koreader_companion', 'opds_optimize_grayscale', 'no') === 'yes',
+            'quality' => self::DEFAULT_OPTIMIZE_QUALITY,
+        ];
+    }
+
+    private function getBooksFolder(string $userId): Node {
+        $folderName = $this->config->getValueString($userId, 'koreader_companion', 'folder', 'eBooks');
+        return $this->rootFolder->getUserFolder($userId)->get($folderName);
+    }
+
+    private function getOrCreateOptimizedFolder(Node $booksFolder): Folder {
+        try {
+            return $booksFolder->get(self::OPTIMIZED_FOLDER_NAME);
+        } catch (NotFoundException $e) {
+            return $booksFolder->newFolder(self::OPTIMIZED_FOLDER_NAME);
+        }
+    }
+
+    /** Non-epub formats have no optimizer, so this is just a copy of the original. */
+    private function buildOptimizedBytes(Node $file, string $userId, string $format): string {
+        $original = $file->getContent();
+
+        if ($format !== 'epub') {
+            return $original;
+        }
+
+        $settings = $this->getOptimizeSettings($userId);
+        if (!$settings['enabled']) {
+            return $original;
+        }
+
+        try {
+            return $this->epubOptimizer->optimize($original, $settings);
+        } catch (\Throwable $e) {
+            // A book must never become undownloadable because optimization failed.
+            $this->logger->warning('EPUB optimization failed, storing original bytes instead', [
+                'app' => 'koreader_companion',
+                'file_id' => $file->getId(),
+                'exception' => $e,
+            ]);
+            return $original;
+        }
+    }
+
+    /**
+     * Ensures `opds-optimized/{fileId}.{format}` exists, rebuilding it when $force is set.
+     *
+     * @return array{node: ?Node, created: bool} `created` tells callers whether the hash
+     *         mapping (which must match the mirror's bytes) needs regenerating too.
+     */
+    private function ensureOptimizedCopy(Node $file, string $userId, string $format, bool $force = false): array {
+        try {
+            $optimizedFolder = $this->getOrCreateOptimizedFolder($this->getBooksFolder($userId));
+            $targetName = $file->getId() . '.' . $format;
+
+            try {
+                $existing = $optimizedFolder->get($targetName);
+                if (!$force) {
+                    return ['node' => $existing, 'created' => false];
+                }
+                $existing->putContent($this->buildOptimizedBytes($file, $userId, $format));
+                return ['node' => $existing, 'created' => true];
+            } catch (NotFoundException $e) {
+                // Falls through to create it below.
+            }
+
+            $node = $optimizedFolder->newFile($targetName, $this->buildOptimizedBytes($file, $userId, $format));
+            return ['node' => $node, 'created' => true];
+        } catch (\Throwable $e) {
+            $this->logger->warning('Could not create opds-optimized copy', [
+                'app' => 'koreader_companion',
+                'file_id' => $file->getId(),
+                'exception' => $e,
+            ]);
+            return ['node' => null, 'created' => false];
+        }
+    }
+
+    /**
+     * Wipes the mirror so the next reconciliation pass rebuilds it -- there is no
+     * per-setting staleness tracking, so this is how a settings change takes effect.
+     */
+    public function resetOptimizedLibrary(string $userId): void {
+        try {
+            $this->getBooksFolder($userId)->get(self::OPTIMIZED_FOLDER_NAME)->delete();
+        } catch (\Exception $e) {
+            // Nothing to reset, or the folder isn't there -- fine either way.
+        }
+    }
+
+    /**
+     * OPDS-only download: resolves the mirror first, falling back to downloadBook()
+     * when it hasn't been built yet (e.g. still in the 'pending' indexing window).
+     *
+     * Kept separate from downloadBook(): the in-app reader and the `bookFile` route
+     * must keep serving the original, full-fidelity file. Only OPDS gets the mirror.
+     */
+    public function downloadOptimizedBook($book, $format) {
+        $user = $this->userSession->getUser();
+        if (!$user) {
+            return new DataResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        try {
+            $optimizedFolder = $this->getBooksFolder($user->getUID())->get(self::OPTIMIZED_FOLDER_NAME);
+            $file = $optimizedFolder->get($book['id'] . '.' . $format);
+
+            $response = new StreamResponse($file->fopen('r'));
+            $response->addHeader('Content-Type', $this->getMimeType($format));
+            $response->addHeader('Content-Disposition', $this->contentDisposition((string)$book['name']));
+            $response->addHeader('Content-Length', $file->getSize());
+            return $response;
+        } catch (\Throwable $e) {
+            return $this->downloadBook($book, $format);
         }
     }
 

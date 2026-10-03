@@ -290,8 +290,40 @@ class SettingsController extends Controller {
         $userId = $user->getUID();
         return new JSONResponse([
             'folder' => $this->config->getValueString($userId, $this->appName, 'folder', 'eBooks'),
-            'auto_rename' => $this->config->getValueString($userId, $this->appName, 'auto_rename', 'no')
+            'auto_rename' => $this->config->getValueString($userId, $this->appName, 'auto_rename', 'no'),
+            'opds_optimize_enabled' => $this->config->getValueString($userId, $this->appName, 'opds_optimize_enabled', 'yes'),
+            'opds_optimize_max_width' => $this->config->getValueString($userId, $this->appName, 'opds_optimize_max_width', '1600'),
+            'opds_optimize_max_height' => $this->config->getValueString($userId, $this->appName, 'opds_optimize_max_height', '2400'),
+            'opds_optimize_grayscale' => $this->config->getValueString($userId, $this->appName, 'opds_optimize_grayscale', 'no'),
         ]);
+    }
+
+    #[NoAdminRequired]
+    public function setOpdsOptimize($enabled, $max_width, $max_height, $grayscale) {
+        $user = $this->getAuthenticatedUser();
+        if ($user instanceof JSONResponse) {
+            return $user; // Return error response
+        }
+
+        $userId = $user->getUID();
+
+        $width = (int)$max_width;
+        $height = (int)$max_height;
+        if ($width < 100 || $width > 10000 || $height < 100 || $height > 10000) {
+            return new JSONResponse(['error' => 'Width and height must be between 100 and 10000'], 400);
+        }
+
+        $this->config->setValueString($userId, $this->appName, 'opds_optimize_enabled', $enabled === 'yes' ? 'yes' : 'no');
+        $this->config->setValueString($userId, $this->appName, 'opds_optimize_max_width', (string)$width);
+        $this->config->setValueString($userId, $this->appName, 'opds_optimize_max_height', (string)$height);
+        $this->config->setValueString($userId, $this->appName, 'opds_optimize_grayscale', $grayscale === 'yes' ? 'yes' : 'no');
+
+        // No per-setting staleness tracking, so a settings change needs a full
+        // rebuild: wipe the mirror and let reconciliation lazily regenerate it.
+        $this->bookService->resetOptimizedLibrary($userId);
+        $this->bookService->ensureMetadataUpToDate($userId, true);
+
+        return new JSONResponse([]);
     }
 
     /**
