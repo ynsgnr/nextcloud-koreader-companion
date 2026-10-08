@@ -2188,6 +2188,22 @@ class BookService {
     }
 
     /**
+     * Download filename for the optimized copy: "Author - Title (opt).ext", so it
+     * is distinguishable from the original on a device. Falls back to the original
+     * file name when there is no usable title.
+     */
+    private function optimizedDownloadName(array $book, string $format): string {
+        $clean = static fn($v): string => trim(preg_replace('/[\x00-\x1f\x7f\/\\\\:*?"<>|]+/u', ' ', (string)$v) ?? '');
+        $title = $clean($book['title'] ?? '');
+        $author = $clean($book['author'] ?? '');
+        if ($title === '') {
+            return pathinfo((string)$book['name'], PATHINFO_FILENAME) . ' (opt).' . $format;
+        }
+        $base = ($author !== '' && strcasecmp($author, 'Unknown') !== 0) ? "$author - $title" : $title;
+        return $base . ' (opt).' . $format;
+    }
+
+    /**
      * OPDS-only download: resolves the mirror first, falling back to downloadBook()
      * when it hasn't been built yet (e.g. still in the 'pending' indexing window).
      *
@@ -2206,7 +2222,7 @@ class BookService {
 
             $response = new StreamResponse($file->fopen('r'));
             $response->addHeader('Content-Type', $this->getMimeType($format));
-            $response->addHeader('Content-Disposition', $this->contentDisposition((string)$book['name']));
+            $response->addHeader('Content-Disposition', $this->contentDisposition($this->optimizedDownloadName($book, $format)));
             $response->addHeader('Content-Length', $file->getSize());
             return $response;
         } catch (\Throwable $e) {
