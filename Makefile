@@ -192,7 +192,7 @@ appstore: clean ## Build the app store tarball
 	  -v "$(CURDIR)":/app -w /app \
 	  -e COMPOSER_HOME=/tmp/composer \
 	  -e COMPOSER_CACHE_DIR=/tmp/composer/cache \
-	  $(COMPOSER_IMAGE) install --no-dev --no-interaction --no-progress --optimize-autoloader
+	  $(COMPOSER_IMAGE) install --no-dev --ignore-platform-req=ext-gd --no-interaction --no-progress --optimize-autoloader
 
 	npm ci --no-audit --no-fund
 	npm run build
