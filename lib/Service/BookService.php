@@ -38,6 +38,13 @@ class BookService {
      */
     public const OPTIMIZED_FOLDER_NAME = 'opds-optimized';
 
+    /**
+     * Per-user config key prefix remembering which mirror node belongs to a source
+     * file id. Mirror files are named "Author - Title (opt).ext" (so they are
+     * recognisable on a device), which means the name can't be used for lookup.
+     */
+    public const OPTIMIZED_NODE_KEY_PREFIX = 'opds_opt_node_';
+
     private const DEFAULT_OPTIMIZE_MAX_WIDTH = 1600;
     private const DEFAULT_OPTIMIZE_MAX_HEIGHT = 2400;
     private const DEFAULT_OPTIMIZE_QUALITY = 85;
@@ -2092,6 +2099,7 @@ class BookService {
 
     // ====================== OPDS OPTIMIZED MIRROR ======================
 
+    /** @return array{enabled:bool,max_width:int,max_height:int,grayscale:bool,quality:int} */
     private function getOptimizeSettings(string $userId): array {
         return [
             'enabled' => $this->config->getValueString($userId, 'koreader_companion', 'opds_optimize_enabled', 'yes') === 'yes',
@@ -2142,7 +2150,7 @@ class BookService {
     }
 
     /**
-     * Ensures `opds-optimized/{fileId}.{format}` exists, rebuilding it when $force is set.
+     * Ensures the "Author - Title (opt).{format}" mirror copy exists, rebuilding it when $force is set.
      *
      * @return array{node: ?Node, created: bool} `created` tells callers whether the hash
      *         mapping (which must match the mirror's bytes) needs regenerating too.
@@ -2150,20 +2158,20 @@ class BookService {
     private function ensureOptimizedCopy(Node $file, string $userId, string $format, bool $force = false): array {
         try {
             $optimizedFolder = $this->getOrCreateOptimizedFolder($this->getBooksFolder($userId));
-            $targetName = $file->getId() . '.' . $format;
+            $existing = $this->findOptimizedNode($userId, (int)$file->getId(), $format, $optimizedFolder);
 
-            try {
-                $existing = $optimizedFolder->get($targetName);
-                if (!$force) {
-                    return ['node' => $existing, 'created' => false];
+            if ($existing !== null) {
+                if ($force) {
+                    $existing->putContent($this->buildOptimizedBytes($file, $userId, $format));
                 }
-                $existing->putContent($this->buildOptimizedBytes($file, $userId, $format));
-                return ['node' => $existing, 'created' => true];
-            } catch (NotFoundException $e) {
-                // Falls through to create it below.
+                $existing = $this->renameOptimizedNode($existing, $optimizedFolder, $this->optimizedFileName($file, $userId, $format));
+                $this->config->setValueString($userId, 'koreader_companion', self::OPTIMIZED_NODE_KEY_PREFIX . $file->getId(), (string)$existing->getId());
+                return ['node' => $existing, 'created' => $force];
             }
 
-            $node = $optimizedFolder->newFile($targetName, $this->buildOptimizedBytes($file, $userId, $format));
+            $name = $this->uniqueOptimizedName($optimizedFolder, $this->optimizedFileName($file, $userId, $format));
+            $node = $optimizedFolder->newFile($name, $this->buildOptimizedBytes($file, $userId, $format));
+            $this->config->setValueString($userId, 'koreader_companion', self::OPTIMIZED_NODE_KEY_PREFIX . $file->getId(), (string)$node->getId());
             return ['node' => $node, 'created' => true];
         } catch (\Throwable $e) {
             $this->logger->warning('Could not create opds-optimized copy', [
@@ -2172,6 +2180,90 @@ class BookService {
                 'exception' => $e,
             ]);
             return ['node' => null, 'created' => false];
+        }
+    }
+
+    /**
+     * The mirror node for a source file: via the remembered node id, or -- for
+     * copies made before files were named after the book -- the legacy
+     * "{fileId}.{format}" name.
+     */
+    private function findOptimizedNode(string $userId, int $fileId, string $format, ?Folder $optimizedFolder = null): ?Node {
+        $nodeId = (int)$this->config->getValueString($userId, 'koreader_companion', self::OPTIMIZED_NODE_KEY_PREFIX . $fileId, '0');
+        if ($nodeId > 0) {
+            $nodes = $this->rootFolder->getUserFolder($userId)->getById($nodeId);
+            if (!empty($nodes)) {
+                return $nodes[0];
+            }
+        }
+        try {
+            $folder = $optimizedFolder ?? $this->getBooksFolder($userId)->get(self::OPTIMIZED_FOLDER_NAME);
+            return $folder->get($fileId . '.' . $format);
+        } catch (NotFoundException $e) {
+            return null;
+        }
+    }
+
+    /** "Author - Title (opt).ext", from the indexed metadata (file name if there is none). */
+    private function optimizedFileName(Node $file, string $userId, string $format): string {
+        $title = '';
+        $author = '';
+        try {
+            $qb = $this->db->getQueryBuilder();
+            $row = $qb->select('title', 'author')
+                ->from('koreader_metadata')
+                ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+                ->andWhere($qb->expr()->eq('file_id', $qb->createNamedParameter($file->getId())))
+                ->executeQuery()->fetch();
+            if ($row) {
+                $title = (string)($row['title'] ?? '');
+                $author = (string)($row['author'] ?? '');
+            }
+        } catch (\Throwable $e) {
+            // Fall back to the file name below.
+        }
+        return $this->buildOptimizedName($title, $author, pathinfo($file->getName(), PATHINFO_FILENAME), $format);
+    }
+
+    private function buildOptimizedName(string $title, string $author, string $fallbackName, string $format): string {
+        $clean = static fn(string $v): string => trim(preg_replace('/[\x00-\x1f\x7f\/\\\\:*?"<>|]+/u', ' ', $v) ?? '');
+        $title = $clean($title);
+        $author = $clean($author);
+        if ($title === '') {
+            $base = $clean($fallbackName);
+        } else {
+            $base = ($author !== '' && strcasecmp($author, 'Unknown') !== 0) ? "$author - $title" : $title;
+        }
+        if ($base === '') {
+            $base = 'book';
+        }
+        // Keep well inside common 255-byte filename limits.
+        $base = mb_strcut($base, 0, 200, 'UTF-8');
+        return $base . ' (opt).' . $format;
+    }
+
+    /** Appends " (2)", " (3)"... so two books with the same author and title don't collide. */
+    private function uniqueOptimizedName(Folder $folder, string $name): string {
+        if (!$folder->nodeExists($name)) {
+            return $name;
+        }
+        $ext = pathinfo($name, PATHINFO_EXTENSION);
+        $base = substr($name, 0, -(strlen($ext) + 1));
+        for ($n = 2; $folder->nodeExists("$base ($n).$ext"); $n++);
+        return "$base ($n).$ext";
+    }
+
+    /** Renames the mirror node when the book's title/author changed since it was created. */
+    private function renameOptimizedNode(Node $node, Folder $folder, string $desired): Node {
+        if ($node->getName() === $desired) {
+            return $node;
+        }
+        $target = $this->uniqueOptimizedName($folder, $desired);
+        try {
+            return $node->move($folder->getPath() . '/' . $target);
+        } catch (\Throwable $e) {
+            $this->logger->debug('Could not rename opds-optimized copy', ['app' => 'koreader_companion', 'exception' => $e]);
+            return $node;
         }
     }
 
@@ -2201,12 +2293,14 @@ class BookService {
         }
 
         try {
-            $optimizedFolder = $this->getBooksFolder($user->getUID())->get(self::OPTIMIZED_FOLDER_NAME);
-            $file = $optimizedFolder->get($book['id'] . '.' . $format);
+            $file = $this->findOptimizedNode($user->getUID(), (int)$book['id'], $format);
+            if ($file === null) {
+                return $this->downloadBook($book, $format);
+            }
 
             $response = new StreamResponse($file->fopen('r'));
             $response->addHeader('Content-Type', $this->getMimeType($format));
-            $response->addHeader('Content-Disposition', $this->contentDisposition((string)$book['name']));
+            $response->addHeader('Content-Disposition', $this->contentDisposition($file->getName()));
             $response->addHeader('Content-Length', $file->getSize());
             return $response;
         } catch (\Throwable $e) {
