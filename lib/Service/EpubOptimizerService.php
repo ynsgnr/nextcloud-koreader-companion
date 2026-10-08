@@ -101,9 +101,7 @@ class EpubOptimizerService {
                 }
 
                 $target->addFromString($name, $data);
-                if (method_exists($target, 'setCompressionName')) {
-                    $target->setCompressionName($name, \ZipArchive::CM_DEFLATE, 9);
-                }
+                $target->setCompressionName($name, \ZipArchive::CM_DEFLATE, 9);
             }
 
             $source->close();
@@ -140,7 +138,7 @@ class EpubOptimizerService {
             $maxWidth = max(1, (int)$settings['max_width']);
             $maxHeight = max(1, (int)$settings['max_height']);
             $grayscale = !empty($settings['grayscale']);
-            $scale = min(1.0, $maxWidth / $width, $maxHeight / $height);
+            $scale = (float)min(1.0, $maxWidth / $width, $maxHeight / $height);
 
             if ($scale >= 1.0 && !$grayscale && $extension !== 'png') {
                 // Already within bounds and no grayscale requested -- nothing to do.
@@ -148,8 +146,8 @@ class EpubOptimizerService {
                 return $data;
             }
 
-            $newWidth = max(1, (int)round($width * $scale));
-            $newHeight = max(1, (int)round($height * $scale));
+            $newWidth = max(1, (int)round((float)$width * $scale));
+            $newHeight = max(1, (int)round((float)$height * $scale));
 
             $resized = imagecreatetruecolor($newWidth, $newHeight);
             // Flatten transparency on white: JPEG has no alpha.
@@ -243,7 +241,7 @@ class EpubOptimizerService {
             $text = preg_replace_callback('~<item\b[^>]*>~i', static function (array $m): string {
                 $tag = $m[0];
                 if (preg_match('~href="[^"]*\.jpg"~i', $tag)) {
-                    $tag = preg_replace('~media-type="image/png"~i', 'media-type="image/jpeg"', $tag);
+                    $tag = preg_replace('~media-type="image/png"~i', 'media-type="image/jpeg"', $tag) ?? $tag;
                 }
                 return $tag;
             }, $text) ?? $text;

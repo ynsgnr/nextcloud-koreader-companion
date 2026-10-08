@@ -2099,6 +2099,7 @@ class BookService {
 
     // ====================== OPDS OPTIMIZED MIRROR ======================
 
+    /** @return array{enabled:bool,max_width:int,max_height:int,grayscale:bool,quality:int} */
     private function getOptimizeSettings(string $userId): array {
         return [
             'enabled' => $this->config->getValueString($userId, 'koreader_companion', 'opds_optimize_enabled', 'yes') === 'yes',
