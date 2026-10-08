@@ -33,7 +33,7 @@ class EpubOptimizerService {
     }
 
     /**
-     * @param array{max_width:int,max_height:int,grayscale:bool,quality:int} $settings
+     * @param array{enabled?:bool,max_width:int,max_height:int,grayscale:bool,quality:int} $settings
      * @throws \RuntimeException if the epub cannot be opened or rewritten at all -- callers
      *         should catch this and fall back to storing the original bytes unmodified.
      */
@@ -119,7 +119,7 @@ class EpubOptimizerService {
     }
 
     /**
-     * @param array{max_width:int,max_height:int,grayscale:bool,quality:int} $settings
+     * @param array{enabled?:bool,max_width:int,max_height:int,grayscale:bool,quality:int} $settings
      */
     private function optimizeImage(string $data, string $extension, array $settings, string $name): string {
         try {
