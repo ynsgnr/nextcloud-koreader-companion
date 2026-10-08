@@ -107,7 +107,16 @@ class FileDeleteListener implements IEventListener {
             $userFolder = $this->rootFolder->getUserFolder($userId);
             $booksFolder = $userFolder->get($folderName);
             $optimizedFolder = $booksFolder->get(BookService::OPTIMIZED_FOLDER_NAME);
-            $optimizedFolder->get($node->getId() . '.' . $extension)->delete();
+            $key = BookService::OPTIMIZED_NODE_KEY_PREFIX . $node->getId();
+            $nodeId = (int)$this->config->getValueString($userId, 'koreader_companion', $key, '0');
+            $copies = $nodeId > 0 ? $userFolder->getById($nodeId) : [];
+            if (!empty($copies)) {
+                $copies[0]->delete();
+            } else {
+                // Copy made before mirror files were named after the book.
+                $optimizedFolder->get($node->getId() . '.' . $extension)->delete();
+            }
+            $this->config->deleteUserConfig($userId, 'koreader_companion', $key);
         } catch (\Exception $e) {
             // Nothing to clean up, or the mirror was never built -- fine either way.
         }
