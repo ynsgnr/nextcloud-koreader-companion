@@ -25,7 +25,7 @@ use Psr\Log\LoggerInterface;
 class HtmlToEpubService {
 
     private const MAX_IMAGES = 30;
-    private const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    private const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
     private const IMAGE_TIMEOUT_SECONDS = 10;
 
     /** Tags kept as-is. Anything else is unwrapped (children kept) or, for DROP_TAGS, removed with its content. */
@@ -50,10 +50,26 @@ class HtmlToEpubService {
         'th' => ['colspan', 'rowspan'],
     ];
 
+    /** Types stored as they arrive. */
     private const IMAGE_TYPES = [
         'image/jpeg' => 'jpg',
         'image/png' => 'png',
     ];
+
+    /** Types re-encoded to JPEG (a GIF keeps its first frame): many e-readers cannot show them. */
+    private const CONVERTED_IMAGE_TYPES = ['image/gif', 'image/webp'];
+
+    /** Decoding allocates width * height * 4 bytes; refuse anything that could exhaust memory. */
+    private const MAX_IMAGE_PIXELS = 40_000_000;
+
+    /** Below this it is a tracking pixel or spacer, not content. */
+    private const MIN_IMAGE_PIXELS = 100;
+
+    /** Deeper wrapper elements are unwrapped: strict XML parsers in readers stop at depth 256. */
+    private const MAX_NESTING_DEPTH = 60;
+
+    /** Real image URL first: lazy-loading pages keep a placeholder in src. */
+    private const IMAGE_SOURCE_ATTRIBUTES = ['data-src', 'data-lazy-src', 'data-original', 'src'];
 
     public function __construct(
         private IClientService $clientService,
@@ -76,6 +92,7 @@ class HtmlToEpubService {
             throw new \RuntimeException('Article has no readable text');
         }
 
+        $this->dropRepeatedTitle($body, $title);
         $images = $this->embedImages($doc);
 
         $chapter = '';
@@ -88,12 +105,20 @@ class HtmlToEpubService {
         return $this->package($title, $author, $baseUrl, $identifier, $chapter, $images);
     }
 
+    private function dropRepeatedTitle(\DOMNode $body, string $title): void {
+        $normalize = static fn (string $s): string => mb_strtolower(trim(preg_replace('/\s+/u', ' ', $s) ?? $s));
+        $heading = (new \DOMXPath($body->ownerDocument))->query('.//h1', $body)->item(0);
+        if ($heading !== null && $normalize($heading->textContent) === $normalize($title)) {
+            $heading->parentNode?->removeChild($heading);
+        }
+    }
+
     private function parse(string $html): \DOMDocument {
         $doc = new \DOMDocument('1.0', 'UTF-8');
         $previous = libxml_use_internal_errors(true);
         try {
             // The XML declaration makes libxml read the bytes as UTF-8 instead of Latin-1.
-            $doc->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_NONET | LIBXML_COMPACT);
+            $doc->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_NONET | LIBXML_COMPACT | LIBXML_PARSEHUGE);
         } finally {
             libxml_clear_errors();
             libxml_use_internal_errors($previous);
@@ -109,6 +134,20 @@ class HtmlToEpubService {
             return;
         }
         $this->sanitizeChildren($body, $baseUrl);
+        $this->flattenDeepWrappers($doc);
+    }
+
+    private function flattenDeepWrappers(\DOMDocument $doc): void {
+        $query = sprintf(
+            '//body//*[(self::div or self::span or self::section or self::article) and count(ancestor::*) > %d]',
+            self::MAX_NESTING_DEPTH
+        );
+        foreach (iterator_to_array((new \DOMXPath($doc))->query($query)) as $wrapper) {
+            while ($wrapper->firstChild !== null) {
+                $wrapper->parentNode->insertBefore($wrapper->firstChild, $wrapper);
+            }
+            $wrapper->parentNode->removeChild($wrapper);
+        }
     }
 
     private function sanitizeChildren(\DOMNode $parent, string $baseUrl): void {
@@ -152,6 +191,9 @@ class HtmlToEpubService {
     }
 
     private function sanitizeAttributes(\DOMElement $element, string $tag, string $baseUrl): void {
+        if ($tag === 'img') {
+            $this->promoteRealImageSource($element);
+        }
         $allowed = self::ALLOWED_ATTRIBUTES[$tag] ?? [];
         foreach (iterator_to_array($element->attributes) as $attribute) {
             if (!in_array(strtolower($attribute->name), $allowed, true)) {
@@ -172,13 +214,24 @@ class HtmlToEpubService {
         }
     }
 
+    private function promoteRealImageSource(\DOMElement $img): void {
+        foreach (self::IMAGE_SOURCE_ATTRIBUTES as $name) {
+            $value = trim($img->getAttribute($name));
+            if ($value !== '' && !str_starts_with(strtolower($value), 'data:')) {
+                $img->setAttribute('src', $value);
+                return;
+            }
+        }
+        $img->removeAttribute('src');
+    }
+
     /** Only http(s) survives; javascript:, data: and friends are dropped. */
     private function resolveUrl(string $url, string $baseUrl): ?string {
         if ($url === '') {
             return null;
         }
         if (str_starts_with($url, '//')) {
-            $url = 'https:' . $url;
+            $url = (parse_url($baseUrl, PHP_URL_SCHEME) === 'http' ? 'http:' : 'https:') . $url;
         }
         $parts = parse_url($url);
         if ($parts === false) {
@@ -244,7 +297,7 @@ class HtmlToEpubService {
         try {
             $response = $client->get($url, [
                 'timeout' => self::IMAGE_TIMEOUT_SECONDS,
-                'headers' => ['Accept' => 'image/jpeg,image/png'],
+                'headers' => ['Accept' => 'image/jpeg,image/png,image/webp,image/gif'],
             ]);
             $bytes = $response->getBody();
             if (!is_string($bytes) || $bytes === '' || strlen($bytes) > self::MAX_IMAGE_BYTES) {
@@ -254,7 +307,15 @@ class HtmlToEpubService {
             $info = @getimagesizefromstring($bytes);
             $type = $info['mime'] ?? '';
 
-            return isset(self::IMAGE_TYPES[$type]) ? ['bytes' => $bytes, 'type' => $type] : null;
+            $pixels = ($info[0] ?? 0) * ($info[1] ?? 0);
+            if ($pixels < self::MIN_IMAGE_PIXELS || $pixels > self::MAX_IMAGE_PIXELS) {
+                return null;
+            }
+            if (isset(self::IMAGE_TYPES[$type])) {
+                return ['bytes' => $bytes, 'type' => $type];
+            }
+
+            return in_array($type, self::CONVERTED_IMAGE_TYPES, true) ? $this->toJpeg($bytes) : null;
         } catch (\Throwable $e) {
             $this->logger->debug('Skipping an article image that could not be fetched', [
                 'app' => 'koreader_companion',
@@ -264,6 +325,59 @@ class HtmlToEpubService {
 
             return null;
         }
+    }
+
+    /** @return array{bytes: string, type: string}|null */
+    private function toJpeg(string $bytes): ?array {
+        $source = @imagecreatefromstring($bytes);
+        if ($source === false) {
+            // GD cannot decode animated WebP; decode its first frame instead.
+            $frame = $this->firstWebpFrame($bytes);
+            $source = $frame === null ? false : @imagecreatefromstring($frame);
+        }
+        if ($source === false) {
+            return null;
+        }
+
+        $flat = imagecreatetruecolor(imagesx($source), imagesy($source));
+        imagefill($flat, 0, 0, imagecolorallocate($flat, 255, 255, 255));
+        imagecopy($flat, $source, 0, 0, 0, 0, imagesx($source), imagesy($source));
+
+        ob_start();
+        imagejpeg($flat, null, 85);
+        $jpeg = (string)ob_get_clean();
+
+        return $jpeg === '' ? null : ['bytes' => $jpeg, 'type' => 'image/jpeg'];
+    }
+
+    /** Re-wraps the first frame of an animated WebP as a still WebP; alpha is dropped. */
+    private function firstWebpFrame(string $bytes): ?string {
+        if (strlen($bytes) < 30 || !str_starts_with($bytes, 'RIFF') || substr($bytes, 8, 4) !== 'WEBP') {
+            return null;
+        }
+
+        $position = 12;
+        $length = strlen($bytes);
+        while ($position + 8 <= $length) {
+            $size = unpack('V', substr($bytes, $position + 4, 4))[1];
+            if (substr($bytes, $position, 4) === 'ANMF') {
+                // 16 bytes of frame header, then the frame's own chunks.
+                $frame = substr($bytes, $position + 8 + 16, max(0, $size - 16));
+                for ($offset = 0; $offset + 8 <= strlen($frame);) {
+                    $chunkSize = unpack('V', substr($frame, $offset + 4, 4))[1];
+                    $chunk = substr($frame, $offset, 8 + $chunkSize + ($chunkSize & 1));
+                    if (in_array(substr($chunk, 0, 4), ['VP8 ', 'VP8L'], true)) {
+                        return 'RIFF' . pack('V', 4 + strlen($chunk)) . 'WEBP' . $chunk;
+                    }
+                    $offset += strlen($chunk);
+                }
+
+                return null;
+            }
+            $position += 8 + $size + ($size & 1);
+        }
+
+        return null;
     }
 
     /** @param array<string, array{bytes: string, type: string}> $images */
