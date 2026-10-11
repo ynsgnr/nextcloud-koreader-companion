@@ -19,6 +19,8 @@ return [
         ['name' => 'settings#setFolder', 'url' => '/settings/folder', 'verb' => 'PUT'],
         ['name' => 'settings#setAutoRename', 'url' => '/settings/auto-rename', 'verb' => 'PUT'],
         ['name' => 'settings#setOpdsOptimize', 'url' => '/settings/opds-optimize', 'verb' => 'PUT'],
+        ['name' => 'settings#setKarakeep', 'url' => '/settings/karakeep', 'verb' => 'PUT'],
+        ['name' => 'settings#syncKarakeep', 'url' => '/settings/karakeep/sync', 'verb' => 'POST'],
         ['name' => 'settings#batchRename', 'url' => '/settings/batch-rename', 'verb' => 'POST'],
         ['name' => 'settings#getBatchRenameProgress', 'url' => '/settings/batch-rename-progress', 'verb' => 'GET'],
         

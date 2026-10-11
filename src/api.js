@@ -112,6 +112,21 @@ export async function setOpdsOptimize({ enabled, maxWidth, maxHeight, grayscale 
 	return data
 }
 
+export async function setKarakeep({ enabled, url: karakeepUrl, apiKey, listId }) {
+	const { data } = await axios.put(url('/settings/karakeep'), {
+		enabled: enabled ? 'yes' : 'no',
+		url: karakeepUrl,
+		api_key: apiKey,
+		list_id: listId,
+	})
+	return data
+}
+
+export async function syncKarakeep() {
+	const { data } = await axios.post(url('/settings/karakeep/sync'))
+	return data
+}
+
 export async function batchRename() {
 	const { data } = await axios.post(url('/settings/batch-rename'), { auto_rename: 'yes' })
 	return data
