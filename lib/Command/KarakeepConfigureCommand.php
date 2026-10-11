@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\KoreaderCompanion\Command;
 
-use OCP\Config\IUserConfig;
+use OCA\KoreaderCompanion\Service\Karakeep\KarakeepSettings;
 use OCP\IUserManager;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -20,7 +20,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 class KarakeepConfigureCommand extends Command {
 
     public function __construct(
-        private IUserConfig $config,
+        private KarakeepSettings $settings,
         private IUserManager $userManager,
     ) {
         parent::__construct();
@@ -28,7 +28,7 @@ class KarakeepConfigureCommand extends Command {
 
     protected function configure(): void {
         $this
-            ->setHelp('Imports bookmarks from one Karakeep list as EPUBs into the user\'s book folder. Use --disable to turn it off.')
+            ->setHelp('Imports the bookmarks of one Karakeep list as EPUBs into the user\'s book folder. Use --disable to turn it off.')
             ->addArgument('user', InputArgument::REQUIRED, 'Nextcloud user id')
             ->addOption('url', null, InputOption::VALUE_REQUIRED, 'Karakeep base URL, e.g. https://karakeep.example.com')
             ->addOption('api-key', null, InputOption::VALUE_REQUIRED, 'Karakeep API key')
@@ -43,29 +43,23 @@ class KarakeepConfigureCommand extends Command {
             return Command::FAILURE;
         }
 
-        if ($input->getOption('disable')) {
-            $this->config->setValueString($userId, 'koreader_companion', 'karakeep_enabled', 'no');
-            $output->writeln('Karakeep import disabled.');
-            return Command::SUCCESS;
-        }
-
         $url = (string)$input->getOption('url');
         $apiKey = (string)$input->getOption('api-key');
         $listId = (string)$input->getOption('list-id');
-        if ($url === '' || $apiKey === '' || $listId === '') {
+        $disable = (bool)$input->getOption('disable');
+        if (!$disable && ($url === '' || $apiKey === '' || $listId === '')) {
             $output->writeln('<error>--url, --api-key and --list-id are all required.</error>');
             return Command::FAILURE;
         }
-        if (!preg_match('#^https?://#i', $url)) {
-            $output->writeln('<error>--url must start with http:// or https://</error>');
+
+        try {
+            $this->settings->save($userId, !$disable, $url, $apiKey, $listId);
+        } catch (\InvalidArgumentException $e) {
+            $output->writeln('<error>' . $e->getMessage() . '</error>');
             return Command::FAILURE;
         }
 
-        $this->config->setValueString($userId, 'koreader_companion', 'karakeep_url', $url);
-        $this->config->setValueString($userId, 'koreader_companion', 'karakeep_api_key', $apiKey, false, IUserConfig::FLAG_SENSITIVE);
-        $this->config->setValueString($userId, 'koreader_companion', 'karakeep_list_id', $listId);
-        $this->config->setValueString($userId, 'koreader_companion', 'karakeep_enabled', 'yes');
-        $output->writeln('Karakeep import enabled. Run koreader:karakeep:sync, or wait for the background job.');
+        $output->writeln($disable ? 'Karakeep import disabled.' : 'Karakeep import enabled. Run koreader:karakeep:sync, or wait for the background job.');
 
         return Command::SUCCESS;
     }

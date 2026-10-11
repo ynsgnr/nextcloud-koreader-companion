@@ -3,7 +3,8 @@ namespace OCA\KoreaderCompanion\Controller;
 
 use OCA\KoreaderCompanion\Service\BookService;
 use OCA\KoreaderCompanion\Service\FilenameService;
-use OCA\KoreaderCompanion\Service\KarakeepSyncService;
+use OCA\KoreaderCompanion\Service\Karakeep\KarakeepSettings;
+use OCA\KoreaderCompanion\Service\Karakeep\KarakeepSyncService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
@@ -25,9 +26,10 @@ class SettingsController extends Controller {
     private $rootFolder;
     private $filenameService;
     private $logger;
+    private KarakeepSettings $karakeepSettings;
     private KarakeepSyncService $karakeepSync;
 
-    public function __construct(IRequest $request, IUserConfig $config, IUserSession $userSession, IDBConnection $db, BookService $bookService, IRootFolder $rootFolder, FilenameService $filenameService, LoggerInterface $logger, KarakeepSyncService $karakeepSync, $appName) {
+    public function __construct(IRequest $request, IUserConfig $config, IUserSession $userSession, IDBConnection $db, BookService $bookService, IRootFolder $rootFolder, FilenameService $filenameService, LoggerInterface $logger, KarakeepSettings $karakeepSettings, KarakeepSyncService $karakeepSync, $appName) {
         parent::__construct($appName, $request);
         $this->config = $config;
         $this->userSession = $userSession;
@@ -35,6 +37,7 @@ class SettingsController extends Controller {
         $this->bookService = $bookService;
         $this->rootFolder = $rootFolder;
         $this->logger = $logger;
+        $this->karakeepSettings = $karakeepSettings;
         $this->karakeepSync = $karakeepSync;
 
         if (!$filenameService) {
@@ -298,11 +301,7 @@ class SettingsController extends Controller {
             'opds_optimize_max_width' => $this->config->getValueString($userId, $this->appName, 'opds_optimize_max_width', '1600'),
             'opds_optimize_max_height' => $this->config->getValueString($userId, $this->appName, 'opds_optimize_max_height', '2400'),
             'opds_optimize_grayscale' => $this->config->getValueString($userId, $this->appName, 'opds_optimize_grayscale', 'no'),
-            'karakeep_enabled' => $this->config->getValueString($userId, $this->appName, 'karakeep_enabled', 'no'),
-            'karakeep_url' => $this->config->getValueString($userId, $this->appName, 'karakeep_url', ''),
-            'karakeep_list_id' => $this->config->getValueString($userId, $this->appName, 'karakeep_list_id', ''),
-            'karakeep_has_api_key' => $this->config->getValueString($userId, $this->appName, 'karakeep_api_key', '') !== '' ? 'yes' : 'no',
-        ]);
+        ] + $this->karakeepSettings->summary($userId));
     }
 
     #[NoAdminRequired]
@@ -333,7 +332,6 @@ class SettingsController extends Controller {
         return new JSONResponse([]);
     }
 
-    /** An empty $api_key keeps the stored one; the key is never sent back to the browser. */
     #[NoAdminRequired]
     public function setKarakeep($enabled, $url, $api_key, $list_id) {
         $user = $this->getAuthenticatedUser();
@@ -341,26 +339,13 @@ class SettingsController extends Controller {
             return $user;
         }
 
-        $userId = $user->getUID();
-        $url = trim((string)$url);
-        $listId = trim((string)$list_id);
-        $apiKey = trim((string)$api_key);
-
-        if ($url !== '' && !preg_match('#^https?://[^\s/]+#i', $url)) {
-            return new JSONResponse(['error' => 'The Karakeep URL must start with http:// or https://'], 400);
+        try {
+            $this->karakeepSettings->save($user->getUID(), $enabled === 'yes', (string)$url, (string)$api_key, (string)$list_id);
+        } catch (\InvalidArgumentException $e) {
+            return new JSONResponse(['error' => $e->getMessage()], 400);
         }
 
-        $this->config->setValueString($userId, $this->appName, 'karakeep_url', $url);
-        $this->config->setValueString($userId, $this->appName, 'karakeep_list_id', $listId);
-        if ($apiKey !== '') {
-            $this->config->setValueString($userId, $this->appName, 'karakeep_api_key', $apiKey, false, \OCP\Config\IUserConfig::FLAG_SENSITIVE);
-        }
-        $this->config->setValueString($userId, $this->appName, 'karakeep_enabled', $enabled === 'yes' ? 'yes' : 'no');
-
-        return new JSONResponse([
-            'configured' => $this->karakeepSync->isConfigured($userId),
-            'has_api_key' => $this->config->getValueString($userId, $this->appName, 'karakeep_api_key', '') !== '',
-        ]);
+        return new JSONResponse(['has_api_key' => $this->karakeepSettings->summary($user->getUID())['karakeep_has_api_key'] === 'yes']);
     }
 
     #[NoAdminRequired]
@@ -370,15 +355,15 @@ class SettingsController extends Controller {
             return $user;
         }
 
-        $userId = $user->getUID();
-        if (!$this->karakeepSync->isConfigured($userId)) {
+        $connection = $this->karakeepSettings->connection($user->getUID());
+        if ($connection === null) {
             return new JSONResponse(['error' => 'Enable the import and fill in URL, API key and list id first'], 400);
         }
 
         try {
-            return new JSONResponse($this->karakeepSync->sync($userId));
+            return new JSONResponse($this->karakeepSync->sync($user->getUID(), $connection));
         } catch (\Throwable $e) {
-            $this->logger->warning('Karakeep sync from the settings page failed', ['app' => $this->appName, 'exception' => $e]);
+            $this->logger->warning('Karakeep import from the settings page failed', ['app' => $this->appName, 'exception' => $e]);
             return new JSONResponse(['error' => 'Could not reach Karakeep, check the URL, API key and list id'], 502);
         }
     }
