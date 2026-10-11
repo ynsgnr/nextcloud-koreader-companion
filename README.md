@@ -70,7 +70,22 @@ The books stay ordinary files in an ordinary Nextcloud folder.
 - Upload from the browser, edit metadata, batch-rename files to a consistent pattern
 - EPUB metadata is read from the file by a background job
 - PDF metadata comes from the filename, Calibre layouts included; PDFs get a placeholder cover
-- No external services, no telemetry, no outbound calls
+- No telemetry. No outbound calls unless you switch on the optional Karakeep import below
+
+### Karakeep import
+
+Optional and off by default. Saves articles from one [Karakeep](https://karakeep.app) list as EPUBs in the book folder:
+
+```bash
+occ koreader:karakeep:configure alice --url https://karakeep.example.com --api-key KEY --list-id LIST_ID
+occ koreader:karakeep:sync alice      # import now; otherwise a background job runs every 5 minutes
+occ koreader:karakeep:configure alice --disable
+```
+
+- Only bookmarks Karakeep has already crawled are imported; the rest are retried on the next run
+- Scripts, styles and unknown markup are dropped; images are downloaded, embedded and shrunk with the OPDS image optimizer settings
+- If Karakeep runs on your own network, Nextcloud must be allowed to reach it:
+  `occ config:system:set allow_local_remote_servers --value=true --type=boolean`
 
 ## Requirements
 
