@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requests to local addresses, so a Karakeep on the same network needs
   `allow_local_remote_servers` set to `true`.
 
+## [1.5.3] - 2026-10-08
+
+### Fixed
+- The EPUB optimizer converts PNG images to JPEG and no longer makes files larger.
+
 ## [1.5.2] - 2026-08-19
 
 ### Fixed
