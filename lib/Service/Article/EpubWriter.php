@@ -58,20 +58,20 @@ class EpubWriter {
         foreach ($images as $fileName => $image) {
             $imageItems .= sprintf(
                 '<item id="%s" href="images/%s" media-type="%s"/>',
-                $this->xml(pathinfo($fileName, PATHINFO_FILENAME)),
-                $this->xml($fileName),
-                $this->xml($image->mimeType)
+                XmlText::escape(pathinfo($fileName, PATHINFO_FILENAME)),
+                XmlText::escape($fileName),
+                XmlText::escape($image->mimeType)
             );
         }
 
         return '<?xml version="1.0" encoding="UTF-8"?>'
             . '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">'
             . '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            . '<dc:identifier id="uid">' . $this->xml($identifier) . '</dc:identifier>'
-            . '<dc:title>' . $this->xml($title) . '</dc:title>'
-            . ($author !== '' ? '<dc:creator>' . $this->xml($author) . '</dc:creator>' : '')
+            . '<dc:identifier id="uid">' . XmlText::escape($identifier) . '</dc:identifier>'
+            . '<dc:title>' . XmlText::escape($title) . '</dc:title>'
+            . ($author !== '' ? '<dc:creator>' . XmlText::escape($author) . '</dc:creator>' : '')
             . '<dc:language>' . self::LANGUAGE . '</dc:language>'
-            . ($sourceUrl !== '' ? '<dc:source>' . $this->xml($sourceUrl) . '</dc:source>' : '')
+            . ($sourceUrl !== '' ? '<dc:source>' . XmlText::escape($sourceUrl) . '</dc:source>' : '')
             . '<meta property="dcterms:modified">' . gmdate('Y-m-d\TH:i:s\Z') . '</meta>'
             . '</metadata>'
             . '<manifest>'
@@ -84,7 +84,7 @@ class EpubWriter {
     }
 
     private function navigationDocument(string $title): string {
-        $title = $this->xml($title);
+        $title = XmlText::escape($title);
 
         return '<?xml version="1.0" encoding="UTF-8"?>'
             . '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
@@ -94,19 +94,12 @@ class EpubWriter {
     }
 
     private function chapterDocument(string $title, string $chapterXhtml): string {
-        $title = $this->xml($title);
+        $title = XmlText::escape($title);
 
         return '<?xml version="1.0" encoding="UTF-8"?>'
             . '<html xmlns="http://www.w3.org/1999/xhtml">'
             . "<head><meta charset=\"utf-8\"/><title>$title</title></head>"
             . "<body><h1>$title</h1>$chapterXhtml</body>"
             . '</html>';
-    }
-
-    /** Escapes text for XML and drops the characters XML 1.0 forbids. */
-    private function xml(string $text): string {
-        $allowed = preg_replace('/[^\x{9}\x{A}\x{D}\x{20}-\x{D7FF}\x{E000}-\x{FFFD}\x{10000}-\x{10FFFF}]/u', '', $text) ?? '';
-
-        return htmlspecialchars($allowed, ENT_XML1 | ENT_QUOTES, 'UTF-8');
     }
 }

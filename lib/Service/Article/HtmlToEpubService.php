@@ -4,14 +4,21 @@ declare(strict_types=1);
 
 namespace OCA\KoreaderCompanion\Service\Article;
 
+use Masterminds\HTML5;
+
 /** Turns one article's readable HTML into an EPUB. */
 class HtmlToEpubService {
 
     private const DEFAULT_TITLE = 'Untitled article';
     private const MAX_IMAGE_DOWNLOADS = 30;
 
+    private const WRAPPER_TAGS = ['div', 'span', 'section', 'article'];
+
+    /** Strict XML parsers in e-readers stop at a depth of 256. */
+    private const MAX_WRAPPER_DEPTH = 60;
+
     public function __construct(
-        private HtmlSanitizer $sanitizer,
+        private ArticleSanitizer $sanitizer,
         private ImageDownloader $imageDownloader,
         private EpubWriter $epubWriter,
     ) {
@@ -24,15 +31,23 @@ class HtmlToEpubService {
     public function convert(string $html, string $title, string $author, string $pageUrl, string $identifier): string {
         $title = $title !== '' ? $title : self::DEFAULT_TITLE;
 
-        $body = $this->sanitizer->sanitize($html, $pageUrl);
+        $body = $this->parseBody($this->sanitizer->sanitize($html, $pageUrl));
         if (trim($body->textContent) === '') {
             throw new \RuntimeException('Article has no readable text');
         }
 
         $this->removeFirstHeadingRepeating($body, $title);
+        $this->unwrapDeepWrappers($body);
         $images = $this->embedImages($body);
+        $chapterXhtml = XmlText::withoutInvalidCharacters($this->innerXml($body));
 
-        return $this->epubWriter->write($title, $author, $pageUrl, $identifier, $this->innerXml($body), $images);
+        return $this->epubWriter->write($title, $author, $pageUrl, $identifier, $chapterXhtml, $images);
+    }
+
+    private function parseBody(string $html): \DOMElement {
+        $document = (new HTML5(['disable_html_ns' => true]))->loadHTML("<!DOCTYPE html><html><body>$html</body></html>");
+
+        return $document->getElementsByTagName('body')->item(0) ?? throw new \RuntimeException('Article has no content');
     }
 
     /** The EPUB adds the title as its own heading. */
@@ -40,6 +55,18 @@ class HtmlToEpubService {
         $heading = $body->getElementsByTagName('h1')->item(0);
         if ($heading !== null && $this->normalize($heading->textContent) === $this->normalize($title)) {
             $heading->parentNode->removeChild($heading);
+        }
+    }
+
+    private function unwrapDeepWrappers(\DOMElement $body): void {
+        $isWrapper = implode(' or ', array_map(static fn (string $tag): string => "self::$tag", self::WRAPPER_TAGS));
+        $query = sprintf('//*[(%s) and count(ancestor::*) > %d]', $isWrapper, self::MAX_WRAPPER_DEPTH);
+
+        foreach (iterator_to_array((new \DOMXPath($body->ownerDocument))->query($query)) as $wrapper) {
+            while ($wrapper->firstChild !== null) {
+                $wrapper->parentNode->insertBefore($wrapper->firstChild, $wrapper);
+            }
+            $wrapper->parentNode->removeChild($wrapper);
         }
     }
 

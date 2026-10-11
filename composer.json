@@ -11,7 +11,10 @@
     "require": {
         "php": "^8.2",
         "kiwilan/php-archive": "^2.0",
-        "smalot/pdfparser": "^2.12"
+        "smalot/pdfparser": "^2.12",
+        "symfony/html-sanitizer": "^7.4",
+        "league/uri": "^7.8",
+        "masterminds/html5": "^2.11"
     },
     "autoload": {
         "psr-4": {
