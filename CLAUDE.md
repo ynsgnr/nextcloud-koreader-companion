@@ -8,7 +8,7 @@ Prioritize substance, clarity, and depth. Challenge all my proposals, designs, a
 **What**: Nextcloud app providing OPDS 1.2 library + KOReader sync API
 **Stack**: PHP 8.0+, Nextcloud 30-31, native NC APIs (IRootFolder, IConfig, IUserSession)
 **Version**: 1.2.0 (Oct 2025)
-**Repo**: https://github.com/ynsgnr/nextcloud-koreader-companion
+**Repo**: ./
 
 **Core capabilities**:
 - OPDS catalog with HTTP Basic Auth (supports app passwords, LDAP, 2FA)
