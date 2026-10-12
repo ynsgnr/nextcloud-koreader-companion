@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-10-12
+
+### Fixed
+- **Karakeep import no longer uses a whole byline block as the author.** Pages
+  such as PubMed Central give Karakeep a byline like "✉ Name email ✉Corresponding
+  author.", which became the book's author and part of its file name. Symbols and
+  extra whitespace are now removed, and a byline that is too long or mentions
+  "Corresponding author" is left out instead.
+
 ## [1.6.0] - 2026-10-11
 
 ### Added
