@@ -12,6 +12,7 @@ class KarakeepClient {
     private const PAGE_SIZE = 20;
     private const MAX_PAGES = 3;
     private const TIMEOUT_SECONDS = 20;
+    private const MAX_AUTHOR_LENGTH = 100;
 
     public function __construct(
         private IClientService $clientService,
@@ -59,11 +60,21 @@ class KarakeepClient {
         return new KarakeepArticle(
             (string)$bookmark['id'],
             trim((string)($bookmark['title'] ?? $link['title'] ?? '')),
-            trim((string)($link['author'] ?? '')),
+            $this->authorName((string)($link['author'] ?? '')),
             (string)($link['url'] ?? ''),
             $link['htmlContent'] ?? null,
             $link['contentAssetId'] ?? null,
         );
+    }
+
+    /** Karakeep's author is often a whole byline block (emails, "Corresponding author"); keep it only if it still reads as a name. */
+    private function authorName(string $byline): string {
+        $withoutSymbols = preg_replace('/[^\p{L}\p{M}\p{N}\p{P}\s]/u', '', $byline) ?? '';
+        $name = trim(preg_replace('/\s+/u', ' ', $withoutSymbols) ?? '');
+
+        $isByline = mb_strlen($name) > self::MAX_AUTHOR_LENGTH || stripos($name, 'corresponding author') !== false;
+
+        return $isByline ? '' : $name;
     }
 
     private function get(KarakeepConnection $connection, string $path): string {
