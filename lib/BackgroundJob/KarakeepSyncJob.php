@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace OCA\KoreaderCompanion\BackgroundJob;
 
-use OCA\KoreaderCompanion\AppInfo\Application;
 use OCA\KoreaderCompanion\Service\Karakeep\KarakeepSettings;
 use OCA\KoreaderCompanion\Service\Karakeep\KarakeepSyncService;
 use OCP\AppFramework\Utility\ITimeFactory;
@@ -13,6 +12,8 @@ use Psr\Log\LoggerInterface;
 
 /** Imports new Karakeep articles for every user who switched the import on. */
 class KarakeepSyncJob extends TimedJob {
+
+    private const APP_ID = 'koreader_companion';
 
     private const INTERVAL_SECONDS = 5 * 60;
 
@@ -38,7 +39,7 @@ class KarakeepSyncJob extends TimedJob {
                 $this->sync->sync($userId, $connection);
             } catch (\Throwable $e) {
                 $this->logger->error('Karakeep import failed', [
-                    'app' => Application::APP_ID,
+                    'app' => self::APP_ID,
                     'userId' => $userId,
                     'exception' => $e,
                 ]);

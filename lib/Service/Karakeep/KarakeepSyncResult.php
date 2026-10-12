@@ -13,6 +13,7 @@ final readonly class KarakeepSyncResult implements \JsonSerializable {
     ) {
     }
 
+    #[\Override]
     public function jsonSerialize(): array {
         return [
             'imported' => $this->imported,

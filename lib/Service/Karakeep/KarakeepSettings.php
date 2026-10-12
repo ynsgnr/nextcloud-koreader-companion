@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace OCA\KoreaderCompanion\Service\Karakeep;
 
-use OCA\KoreaderCompanion\AppInfo\Application;
 use OCP\Config\IUserConfig;
 
 /** A user's Karakeep import settings and progress, kept in their app preferences. */
 class KarakeepSettings {
+
+    private const APP_ID = 'koreader_companion';
 
     public function __construct(
         private IUserConfig $config,
@@ -42,7 +43,7 @@ class KarakeepSettings {
         $this->write($userId, 'karakeep_url', $url);
         $this->write($userId, 'karakeep_list_id', trim($listId));
         if (trim($apiKey) !== '') {
-            $this->config->setValueString($userId, Application::APP_ID, 'karakeep_api_key', trim($apiKey), false, IUserConfig::FLAG_SENSITIVE);
+            $this->config->setValueString($userId, self::APP_ID, 'karakeep_api_key', trim($apiKey), false, IUserConfig::FLAG_SENSITIVE);
         }
         $this->write($userId, 'karakeep_enabled', $enabled ? 'yes' : 'no');
     }
@@ -59,7 +60,7 @@ class KarakeepSettings {
 
     /** @return string[] */
     public function userIdsWithImportEnabled(): array {
-        return iterator_to_array($this->config->searchUsersByValueString(Application::APP_ID, 'karakeep_enabled', 'yes'), false);
+        return iterator_to_array($this->config->searchUsersByValueString(self::APP_ID, 'karakeep_enabled', 'yes'), false);
     }
 
     public function importState(string $userId): KarakeepImportState {
@@ -75,10 +76,10 @@ class KarakeepSettings {
     }
 
     private function read(string $userId, string $key, string $default = ''): string {
-        return $this->config->getValueString($userId, Application::APP_ID, $key, $default);
+        return $this->config->getValueString($userId, self::APP_ID, $key, $default);
     }
 
     private function write(string $userId, string $key, string $value): void {
-        $this->config->setValueString($userId, Application::APP_ID, $key, $value);
+        $this->config->setValueString($userId, self::APP_ID, $key, $value);
     }
 }

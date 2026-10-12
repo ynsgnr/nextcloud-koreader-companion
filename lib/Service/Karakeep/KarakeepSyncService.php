@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace OCA\KoreaderCompanion\Service\Karakeep;
 
-use OCA\KoreaderCompanion\AppInfo\Application;
 use OCA\KoreaderCompanion\Service\Article\HtmlToEpubService;
 use OCA\KoreaderCompanion\Service\FilenameService;
 use OCP\Files\Folder;
@@ -18,6 +17,8 @@ use Psr\Log\LoggerInterface;
  * The normal file listener indexes them, so they show up in OPDS like uploads.
  */
 class KarakeepSyncService {
+
+    private const APP_ID = 'koreader_companion';
 
     private const MAX_IMPORTS_PER_RUN = 10;
 
@@ -57,7 +58,7 @@ class KarakeepSyncService {
                     $state->recordFailure($article->id);
                     $failed++;
                     $this->logger->warning('Karakeep import failed', [
-                        'app' => Application::APP_ID,
+                        'app' => self::APP_ID,
                         'bookmarkId' => $article->id,
                         'exception' => $e,
                     ]);
@@ -92,7 +93,7 @@ class KarakeepSyncService {
 
     private function booksFolder(string $userId): Folder {
         $userFolder = $this->rootFolder->getUserFolder($userId);
-        $name = $this->config->getValueString($userId, Application::APP_ID, 'folder', 'eBooks');
+        $name = $this->config->getValueString($userId, self::APP_ID, 'folder', 'eBooks');
         try {
             $folder = $userFolder->get($name);
         } catch (NotFoundException) {

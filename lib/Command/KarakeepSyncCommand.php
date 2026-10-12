@@ -27,10 +27,12 @@ class KarakeepSyncCommand extends Command {
         parent::__construct();
     }
 
+    #[\Override]
     protected function configure(): void {
         $this->addArgument('user', InputArgument::REQUIRED, 'Nextcloud user id');
     }
 
+    #[\Override]
     protected function execute(InputInterface $input, OutputInterface $output): int {
         $userId = (string)$input->getArgument('user');
         if (!$this->userManager->userExists($userId)) {

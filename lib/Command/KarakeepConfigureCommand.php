@@ -26,6 +26,7 @@ class KarakeepConfigureCommand extends Command {
         parent::__construct();
     }
 
+    #[\Override]
     protected function configure(): void {
         $this
             ->setHelp('Imports the bookmarks of one Karakeep list as EPUBs into the user\'s book folder. Use --disable to turn it off.')
@@ -36,6 +37,7 @@ class KarakeepConfigureCommand extends Command {
             ->addOption('disable', null, InputOption::VALUE_NONE, 'Turn the import off');
     }
 
+    #[\Override]
     protected function execute(InputInterface $input, OutputInterface $output): int {
         $userId = (string)$input->getArgument('user');
         if (!$this->userManager->userExists($userId)) {

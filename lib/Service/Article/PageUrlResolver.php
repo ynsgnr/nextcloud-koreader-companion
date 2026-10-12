@@ -22,14 +22,17 @@ final class PageUrlResolver implements AttributeSanitizerInterface {
         }
     }
 
+    #[\Override]
     public function getSupportedElements(): ?array {
         return ['a', 'img'];
     }
 
+    #[\Override]
     public function getSupportedAttributes(): ?array {
         return ['href', 'src'];
     }
 
+    #[\Override]
     public function sanitizeAttribute(string $element, string $attribute, string $value, HtmlSanitizerConfig $config): ?string {
         if (str_starts_with($value, '#')) {
             return $value;

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace OCA\KoreaderCompanion\Service\Article;
 
-use OCA\KoreaderCompanion\AppInfo\Application;
 use OCP\Http\Client\IClientService;
 use Psr\Log\LoggerInterface;
 
@@ -15,6 +14,8 @@ use Psr\Log\LoggerInterface;
  * addresses unless the admin allows them.
  */
 class ImageDownloader {
+
+    private const APP_ID = 'koreader_companion';
 
     private const TIMEOUT_SECONDS = 10;
     private const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
@@ -44,7 +45,7 @@ class ImageDownloader {
             return strlen($bytes) > self::MAX_DOWNLOAD_BYTES ? null : $this->prepare($bytes);
         } catch (\Throwable $e) {
             $this->logger->debug('Skipping an article image', [
-                'app' => Application::APP_ID,
+                'app' => self::APP_ID,
                 'url' => $url,
                 'exception' => $e,
             ]);
