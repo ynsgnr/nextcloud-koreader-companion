@@ -8,14 +8,14 @@ Prioritize substance, clarity, and depth. Challenge all my proposals, designs, a
 **What**: Nextcloud app providing OPDS 1.2 library + KOReader sync API
 **Stack**: PHP 8.0+, Nextcloud 30-31, native NC APIs (IRootFolder, IConfig, IUserSession)
 **Version**: 1.2.0 (Oct 2025)
-**Repo**: https://github.com/international-omelette/nextcloud-koreader-companion
+**Repo**: ./
 
 **Core capabilities**:
 - OPDS catalog with HTTP Basic Auth (supports app passwords, LDAP, 2FA)
 - KOReader sync (custom password, MD5 headers: `x-auth-user`, `x-auth-key`)
 - Event-driven metadata extraction (EPUB/PDF)
 - Web UI with infinite scroll, modal uploads
-- Privacy-first: zero external dependencies
+- Privacy-first: no telemetry; the only outbound calls are the opt-in Karakeep import
 
 **Architecture shift (v1.0 → v1.2)**:
 - Path-based → ID-based file operations

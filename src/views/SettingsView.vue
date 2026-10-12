@@ -91,6 +91,61 @@
 				{{ t('koreader_companion', 'Save and rebuild opds-optimized library') }}
 			</NcButton>
 		</NcSettingsSection>
+
+		<NcSettingsSection
+			:name="t('koreader_companion', 'Karakeep import')"
+			:description="t('koreader_companion', 'Save the articles of one Karakeep list as EPUBs in your library. New items are picked up every few minutes.')">
+			<NcCheckboxRadioSwitch
+				:model-value="karakeepEnabled"
+				type="switch"
+				@update:model-value="onKarakeepEnabledChange">
+				{{ t('koreader_companion', 'Import articles from Karakeep') }}
+			</NcCheckboxRadioSwitch>
+
+			<div class="settings__row">
+				<NcTextField
+					v-model="karakeepUrl"
+					:disabled="!karakeepEnabled"
+					:label="t('koreader_companion', 'Karakeep URL')"
+					class="settings__karakeep-field" />
+				<NcTextField
+					v-model="karakeepListId"
+					:disabled="!karakeepEnabled"
+					:label="t('koreader_companion', 'List id')"
+					class="settings__karakeep-field" />
+			</div>
+
+			<div class="settings__row">
+				<NcPasswordField
+					v-model="karakeepApiKey"
+					:disabled="!karakeepEnabled"
+					:label="karakeepHasApiKey ? t('koreader_companion', 'API key (leave empty to keep the saved one)') : t('koreader_companion', 'API key')"
+					class="settings__karakeep-field" />
+			</div>
+
+			<div class="settings__row">
+				<NcButton
+					:disabled="savingKarakeep"
+					class="settings__rename"
+					@click="saveKarakeepSettings">
+					<template #icon>
+						<NcLoadingIcon v-if="savingKarakeep" :size="20" />
+						<ContentSaveOutline v-else :size="20" />
+					</template>
+					{{ t('koreader_companion', 'Save') }}
+				</NcButton>
+				<NcButton
+					:disabled="syncingKarakeep || !karakeepEnabled"
+					class="settings__rename"
+					@click="runKarakeepSync">
+					<template #icon>
+						<NcLoadingIcon v-if="syncingKarakeep" :size="20" />
+						<Sync v-else :size="20" />
+					</template>
+					{{ t('koreader_companion', 'Import now') }}
+				</NcButton>
+			</div>
+		</NcSettingsSection>
 	</div>
 </template>
 
@@ -99,12 +154,14 @@ import { FilePickerClosed, getFilePickerBuilder, showError, showSuccess } from '
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
+import NcPasswordField from '@nextcloud/vue/components/NcPasswordField'
 import NcProgressBar from '@nextcloud/vue/components/NcProgressBar'
 import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import ContentSaveOutline from 'vue-material-design-icons/ContentSaveOutline.vue'
 import FolderOutline from 'vue-material-design-icons/FolderOutline.vue'
 import Pencil from 'vue-material-design-icons/Pencil.vue'
+import Sync from 'vue-material-design-icons/Sync.vue'
 
 import {
 	batchRename,
@@ -112,7 +169,9 @@ import {
 	getSettings,
 	setAutoRename,
 	setFolder,
+	setKarakeep,
 	setOpdsOptimize,
+	syncKarakeep,
 } from '../api.js'
 
 export default {
@@ -124,10 +183,12 @@ export default {
 		NcButton,
 		NcCheckboxRadioSwitch,
 		NcLoadingIcon,
+		NcPasswordField,
 		NcProgressBar,
 		NcSettingsSection,
 		NcTextField,
 		Pencil,
+		Sync,
 	},
 
 	data() {
@@ -142,6 +203,13 @@ export default {
 			optimizeMaxHeight: 2400,
 			optimizeGrayscale: false,
 			savingOptimize: false,
+			karakeepEnabled: false,
+			karakeepUrl: '',
+			karakeepListId: '',
+			karakeepApiKey: '',
+			karakeepHasApiKey: false,
+			savingKarakeep: false,
+			syncingKarakeep: false,
 		}
 	},
 
@@ -154,6 +222,10 @@ export default {
 			this.optimizeMaxWidth = parseInt(settings.opds_optimize_max_width, 10) || 1600
 			this.optimizeMaxHeight = parseInt(settings.opds_optimize_max_height, 10) || 2400
 			this.optimizeGrayscale = settings.opds_optimize_grayscale === 'yes'
+			this.karakeepEnabled = settings.karakeep_enabled === 'yes'
+			this.karakeepUrl = settings.karakeep_url || ''
+			this.karakeepListId = settings.karakeep_list_id || ''
+			this.karakeepHasApiKey = settings.karakeep_has_api_key === 'yes'
 		} catch (error) {
 			showError(t('koreader_companion', 'Could not load settings'))
 		}
@@ -243,6 +315,43 @@ export default {
 			}
 		},
 
+		async onKarakeepEnabledChange(value) {
+			this.karakeepEnabled = value
+			await this.saveKarakeepSettings()
+		},
+
+		/** Text fields only commit here (button or the switch), not on every keystroke. */
+		async saveKarakeepSettings() {
+			this.savingKarakeep = true
+			try {
+				const result = await setKarakeep({
+					enabled: this.karakeepEnabled,
+					url: this.karakeepUrl,
+					apiKey: this.karakeepApiKey,
+					listId: this.karakeepListId,
+				})
+				this.karakeepHasApiKey = !!result?.has_api_key
+				this.karakeepApiKey = ''
+				showSuccess(t('koreader_companion', 'Karakeep settings saved'))
+			} catch (error) {
+				showError(error?.response?.data?.error || t('koreader_companion', 'Could not save that setting'))
+			} finally {
+				this.savingKarakeep = false
+			}
+		},
+
+		async runKarakeepSync() {
+			this.syncingKarakeep = true
+			try {
+				const result = await syncKarakeep()
+				showSuccess(t('koreader_companion', 'Imported {count} articles', { count: result?.imported ?? 0 }))
+			} catch (error) {
+				showError(error?.response?.data?.error || t('koreader_companion', 'Import failed'))
+			} finally {
+				this.syncingKarakeep = false
+			}
+		},
+
 		async confirmRename() {
 			this.renaming = true
 			this.renameProgress = 0
@@ -297,6 +406,11 @@ export default {
 
 	&__progress {
 		margin-block-start: calc(var(--default-grid-baseline) * 2);
+		max-width: 360px;
+	}
+
+	&__karakeep-field {
+		flex: 1 1 240px;
 		max-width: 360px;
 	}
 

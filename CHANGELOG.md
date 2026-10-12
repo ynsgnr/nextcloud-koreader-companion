@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-10-11
+
+### Added
+- **Karakeep article import.** Articles saved to a Karakeep list are converted
+  to EPUB and added to the user's book folder, so they appear in OPDS and sync
+  like any other book. A background job polls every 5 minutes. Off by default;
+  set it up with `occ koreader:karakeep:configure <user> --url --api-key
+  --list-id` and run it now with `occ koreader:karakeep:sync <user>`. The
+  article HTML is rebuilt from an element allowlist, images are embedded and
+  then shrunk by the existing OPDS image optimizer settings. Nextcloud blocks
+  requests to local addresses, so a Karakeep on the same network needs
+  `allow_local_remote_servers` set to `true`.
+
 ## [1.5.3] - 2026-10-08
 
 ### Fixed
