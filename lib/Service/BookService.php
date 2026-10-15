@@ -1014,7 +1014,7 @@ class BookService {
             $result = $qb->select('*')
                 ->from('koreader_sync_progress')
                 ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
-                ->andWhere($qb->expr()->in('document_hash', $qb->createNamedParameter($documentHashes, \Doctrine\DBAL\Connection::PARAM_STR_ARRAY)))
+                ->andWhere($qb->expr()->in('document_hash', $qb->createNamedParameter($documentHashes, IQueryBuilder::PARAM_STR_ARRAY)))
                 ->orderBy('updated_at', 'DESC')
                 ->setMaxResults(1)
                 ->executeQuery();
@@ -1995,7 +1995,7 @@ class BookService {
             $qb = $this->db->getQueryBuilder();
             $affectedRows = $qb->delete('koreader_sync_progress')
                ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
-               ->andWhere($qb->expr()->in('document_hash', $qb->createNamedParameter($documentHashes, \Doctrine\DBAL\Connection::PARAM_STR_ARRAY)))
+               ->andWhere($qb->expr()->in('document_hash', $qb->createNamedParameter($documentHashes, IQueryBuilder::PARAM_STR_ARRAY)))
                ->executeStatement();
 
             return $affectedRows;

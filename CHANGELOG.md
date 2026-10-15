@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-10-15
+
+### Added
+- **Nextcloud 35 support.** `info.xml` now declares `min-version=34
+  max-version=35`. Checked against the 35 developer upgrade notes and the
+  35.0.1 sources: every `OCP\` class the app imports still exists, commands
+  already return `int`, previews register through `IRegistrationContext`, and
+  the frontend uses none of the removed globals (`_`, `moment`, `oc_*`,
+  `OCDialogs`). Not yet run against a live 35 instance.
+
+### Fixed
+- Document-hash lookups used `Doctrine\DBAL\Connection::PARAM_STR_ARRAY`,
+  which Nextcloud does not promise to keep as it moves to a DBAL wrapper. They
+  now use `IQueryBuilder::PARAM_STR_ARRAY`.
+
 ## [1.6.1] - 2026-10-12
 
 ### Fixed

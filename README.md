@@ -89,8 +89,8 @@ occ koreader:karakeep:configure alice --disable
 
 ## Requirements
 
-- Nextcloud 34
-- PHP 8.2+
+- Nextcloud 34 or 35
+- PHP 8.2+ (Nextcloud 35 itself needs 8.3+)
 - **Working background jobs** — `occ background:cron` is recommended. Metadata extraction runs as a
   background job, so without them books stay listed under their filename. (There is an _Extract
   metadata now_ button in the library for when you do not want to wait.)
